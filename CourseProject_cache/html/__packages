@@ -1,0 +1,15 @@
+base
+RevoUtilsMath
+corrplot
+dplyr
+lattice
+ggplot2
+caret
+knitr
+e1071
+Matrix
+mi
+foreach
+iterators
+doParallel
+randomForest

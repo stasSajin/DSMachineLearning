@@ -1,0 +1,129 @@
+---
+title: "Machine Learning"
+author: "Stas Sajin"
+date: "September 26, 2015"
+output: html_document
+---
+
+#**Summary**
+###*Background*
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The aim of this project is to predict if participants performed the exercise correctly or incorrectly by using the data from accelerometeres on the belt, arms, forearm, and dumbell. A random forest model was fitted and cross-validated using repeated 10 k-fold validation.
+The model with the highest predictive accuracy during cross-validation was selected for testing.
+
+###*Libraries*
+The following libraries were used:
+```{r, warning=FALSE, message=FALSE}
+library(corrplot)
+library(dplyr)
+library(caret)
+library(knitr)
+library(e1071)
+library(mi)
+library(doParallel)
+library(parallel)
+```
+
+#**Data Exploration and Cleaning**
+###*Data Loading*
+Note that the data has missing values denoted with ampty cells or with NA.
+```{r,cache=TRUE}
+train<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",na.strings = c("NA", ""))
+test<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",na.strings = c("NA", ""))
+```
+
+###*Pre-processing*
+The data seems to have a large number of predictor variables. First thing I do is check if any of the numerical predictor variables have enough variability in them to be used as predictors. For that, I use the nearZeroVar function that identifies predictors with near zero variability.
+```{r, cache==TRUE}
+#check which numerical variables have near zero variance
+zeroVariables<-nearZeroVar(train[ , sapply(train, is.numeric)])
+length(zeroVariables) # 26 variables with zero var can be removed
+train1<-train %>% select(-zeroVariables) #variables with near o variance are filtered from the train dataset and assigned to the train1 dataset
+```
+
+By removing the predictors with near zero variability, the number of predictors went by 26. In the next step, I try to identify the pattern of missing data in the dataset. The output of the code chunk below has been supressed, but it indicates that variables in the data.frame either have no missing data or have almost 95% of the data missing. I am removing predictors with na
+
+```{r,results='hide',warning=FALSE,message=FALSE, cache=TRUE}
+#check the pattern of missing data in the dataset
+mdf<-missing_data.frame(train1)
+show(mdf) #shows information about missingness for each variable
+rm(mdf)
+train1 <- train1[colSums(is.na(train1)) == 0]
+```
+
+###*Transformations*
+In the next code chunk, I try to identify if there is any non-normality present in the data. 
+```{r, cache=TRUE}
+#find  if any values have high skewnesss and high kurtosis
+skewValues <- apply(train1[ , sapply(train1, is.numeric)], 2, skewness)
+histogram(skewValues, breaks=50)
+kurtosisValues <- apply(train1[ , sapply(train1, is.numeric)], 2, kurtosis)
+histogram(kurtosisValues, breaks=50)
+```
+The histograms indicate that there are a few values that are extremely skewed and have very high kurtosis. In order to account for this type of non-normality, in later analysis for each model, I will apply BoxCox transformation. 
+
+So far we have managed to reduce our dataset from 160 colums to a mere 44 colums
+```{r}
+dim(train)
+dim(train1)
+```
+
+###*Dimentionality Reduction*
+I will examine below if the dimentionality of the data can be reduced even further. First, I plot the correelations between predictors. Below you will note a correlations plot. The blue areas represent positive correlations (the darker the shade of blue, the stronger the positive correlation); the red areas represent negative correlations (the darker the shade of red, the stronger the correlation). 
+```{r, cache=TRUE}
+str(train1)
+trainPredictors<-train1[,-c(1:6,44)] #there are 37 numerical predictors that will be used
+correlations<-cor(trainPredictors)
+par(ps=1)
+corrplot.mixed(correlations, order = "hclust", tl.col="black", tl.pos = "lt", 
+               lower="shade",tl.cex = 5,diag = "l",mar=c(1,1,1,1),upper = "shade")
+```
+
+Although there are some relationships indicating that the data could be reduced even further, the correlation plot does not show the effectiveness of data reduction in the hyperplane. We can confim if a dataset of fewer observation can be more effective than 37 predictor variables
+
+```{r,}
+preProcess.default(x = trainPredictors, method = c("BoxCox", "center",
+"scale", "pca"))
+```
+It seems that we can use 20 PCA, which explain 95% of the variability in the data rather than all 37 predictors. There is not that big of a difference between 20 and 37 variables, so I apply all the models to the full dataset. It might be possible that some of the minor variables could explain the outlier data_points
+
+
+#*Model Prediction and Validation*
+
+Because of my memory demands (I have a 4gb laptop with an i3 processor), I'm unable to run a random forest using the full dataset. Instead, I will run the model on a smaller portion (25%) of the data. 
+
+```{r,cache=TRUE}
+InTrain<-createDataPartition(y=train1$classe,p=0.25,list=FALSE)
+training1<-train1[InTrain,]
+trainPredictors<-training1[,-c(1:6,44)]
+classe<-training1$classe
+```
+
+Below I test a random forest on the 25% of the data.
+####**Random Forest**
+```{r forest,cache=TRUE, warning=FALSE}
+set.seed(123)
+registerDoParallel(3)
+rfFit <- train(x=trainPredictors, y=classe,
+        method = "rf",
+        preProc = c("BoxCox", "center", "scale"),
+        trControl = trainControl(method = "repeatedcv",
+        repeats = 5, allowParallel = TRUE), importance = TRUE)
+```
+
+Below you will find the plot with the accuracy of the models with repeated cross-validation. 
+```{r output,}
+plot(rfFit, scales = list(x = list(log = 2)))
+rfFit$finalModel
+```
+
+You can notice that even though we used 25% of the data, the cross-validation performance on the set that we selected is fairly high. The best model has an accuracy of about 98.71%. I estimate the out of sample error on test sets to be 1.29% (1-98.71%). 
+
+###**Model Predictions**
+These are the predicted responses on the test set.
+```{r test, warning=FALSE}
+names<-colnames(trainPredictors) #extract the colums from the test set that are used as predictors
+testResponses <- predict(rfFit, test[,names])
+testResponses
+```
